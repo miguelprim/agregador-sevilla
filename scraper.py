@@ -1,8 +1,8 @@
 from datetime import datetime
-import os
 import re
 import requests
 
+# URL fija para evitar fallos de entorno en GitHub Actions
 MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/tg93wwof55r5krw31joysyih2wv5qt0w"
 
 MUNICIPIOS_SEVILLA = [
@@ -18,127 +18,185 @@ HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
-    )
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "es-ES,es;q=0.9",
 }
 
 
-def es_de_sevilla(texto):
-    if not texto:
-        return False
-    texto_l = texto.lower()
-    return any(m in texto_l for m in MUNICIPIOS_SEVILLA)
+def crear_oferta(titulo, link, portal, categoria, fecha_hoy):
+    """Estructura normalizada para Google Sheets y Jobboardly."""
+    return {
+        "job_title": titulo,
+        "job_type": "fulltime",
+        "company_name": f"Empresa en Sevilla ({portal})",
+        "company_url": link,
+        "company_logo": "",
+        "job_location": "onsite",
+        "office_location": "Sevilla, España",
+        "location_limits": "España",
+        "description": f"<p>Oferta de empleo publicada en Sevilla: <strong>{titulo}</strong>. Consulta todos los detalles e inscríbete a través de <a href='{link}'>{portal}</a>.</p>",
+        "apply_url": link,
+        "apply_email": "",
+        "salary_min": "",
+        "salary_maximum": "",
+        "salary_currency": "EUR",
+        "salary_schedule": "yearly",
+        "highlighted": "FALSE",
+        "sticky": "FALSE",
+        "post_length": "30",
+        "post_state": "published",
+        "date_posted": fecha_hoy,
+        "category_name": categoria,
+    }
 
 
 def buscar_tecnoempleo(fecha_hoy):
     ofertas = []
-    url = "https://www.tecnoempleo.com/busqueda-empleo.asp?te=sevilla"
-    
     try:
-        res = requests.get(url, headers=HEADERS, timeout=15)
+        res = requests.get("https://www.tecnoempleo.com/busqueda-empleo.asp?te=sevilla", headers=HEADERS, timeout=10)
         if res.status_code == 200:
-            html = res.text
-            # Regex nativo para extraer títulos y links de ofertas
-            patron = r'<a[^>]+href=["\']([^"\']*/-/[^"\']+)["\'][^>]*>(.*?)</a>'
-            coincidencias = re.findall(patron, html, re.IGNORECASE)
-
+            matches = re.findall(r'<a[^>]+href=["\']([^"\']*/-/[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
             vistos = set()
-            for link, titulo in coincidencias:
-                titulo_limpio = re.sub(r'<[^>]+>', '', titulo).strip()
+            for link, titulo in matches:
+                tit = re.sub(r'<[^>]+>', '', titulo).strip()
                 if not link.startswith("http"):
                     link = "https://www.tecnoempleo.com/" + link.lstrip("/")
-
-                if link in vistos or not titulo_limpio or len(titulo_limpio) < 3:
-                    continue
-                vistos.add(link)
-
-                ofertas.append({
-                    "job_title": titulo_limpio,
-                    "job_type": "fulltime",
-                    "company_name": "Empresa en Sevilla",
-                    "company_url": link,
-                    "company_logo": "",
-                    "job_location": "onsite",
-                    "office_location": "Sevilla, España",
-                    "location_limits": "España",
-                    "description": f"<p>Puesto de trabajo: {titulo_limpio} en Sevilla. Más información en <a href='{link}'>Tecnoempleo</a>.</p>",
-                    "apply_url": link,
-                    "apply_email": "",
-                    "salary_min": "",
-                    "salary_maximum": "",
-                    "salary_currency": "EUR",
-                    "salary_schedule": "yearly",
-                    "highlighted": "FALSE",
-                    "sticky": "FALSE",
-                    "post_length": "30",
-                    "post_state": "published",
-                    "date_posted": fecha_hoy,
-                    "category_name": "Tecnología / Informática",
-                })
+                if link not in vistos and len(tit) > 3:
+                    vistos.add(link)
+                    ofertas.append(crear_oferta(tit, link, "Tecnoempleo", "Tecnología / IT", fecha_hoy))
     except Exception as e:
-        print(f"Error procesando Tecnoempleo: {e}")
-
+        print(f"Error Tecnoempleo: {e}")
     return ofertas
 
 
-def buscar_jobicy_remoto(fecha_hoy):
+def buscar_infojobs(fecha_hoy):
     ofertas = []
-    url = "https://jobicy.com/api/v2/remote-jobs?geo=spain"
-
     try:
-        res = requests.get(url, headers=HEADERS, timeout=15)
+        res = requests.get("https://www.infojobs.net/ofertas-trabajo/sevilla", headers=HEADERS, timeout=10)
         if res.status_code == 200:
-            datos = res.json().get("jobs", [])
-            for j in datos:
-                loc = j.get("jobGeo", "")
-                tit = j.get("jobTitle", "")
-                desc = j.get("jobExcerpt", "")
-
-                if "spain" in loc.lower() or "españa" in loc.lower() or es_de_sevilla(f"{loc} {tit} {desc}"):
-                    ofertas.append({
-                        "job_title": tit,
-                        "job_type": "fulltime",
-                        "company_name": j.get("companyName", "Empresa Remota"),
-                        "company_url": j.get("url", ""),
-                        "company_logo": j.get("companyLogo", ""),
-                        "job_location": "remote",
-                        "office_location": "Sevilla / Remoto España",
-                        "location_limits": "España",
-                        "description": desc if desc else f"<p>Puesto remoto en España: {tit}</p>",
-                        "apply_url": j.get("url", ""),
-                        "apply_email": "",
-                        "salary_min": j.get("annualSalaryMin", ""),
-                        "salary_maximum": j.get("annualSalaryMax", ""),
-                        "salary_currency": "EUR",
-                        "salary_schedule": "yearly",
-                        "highlighted": "FALSE",
-                        "sticky": "FALSE",
-                        "post_length": "30",
-                        "post_state": "published",
-                        "date_posted": fecha_hoy,
-                        "category_name": j.get("jobCategory", "General"),
-                    })
+            matches = re.findall(r'<a[^>]+href=["\']([^"\']*infojobs\.net/of-[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
+            vistos = set()
+            for link, titulo in matches:
+                tit = re.sub(r'<[^>]+>', '', titulo).strip()
+                if link.startswith("//"):
+                    link = "https:" + link
+                if link not in vistos and len(tit) > 4:
+                    vistos.add(link)
+                    ofertas.append(crear_oferta(tit, link, "InfoJobs", "General", fecha_hoy))
     except Exception as e:
-        print(f"Error procesando Jobicy: {e}")
+        print(f"Error InfoJobs: {e}")
+    return ofertas
 
+
+def buscar_turijobs(fecha_hoy):
+    ofertas = []
+    try:
+        res = requests.get("https://www.turijobs.com/ofertas-trabajo-sevilla", headers=HEADERS, timeout=10)
+        if res.status_code == 200:
+            matches = re.findall(r'<a[^>]+href=["\']([^"\']*/oferta-[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
+            vistos = set()
+            for link, titulo in matches:
+                tit = re.sub(r'<[^>]+>', '', titulo).strip()
+                if not link.startswith("http"):
+                    link = "https://www.turijobs.com" + link
+                if link not in vistos and len(tit) > 3:
+                    vistos.add(link)
+                    ofertas.append(crear_oferta(tit, link, "Turijobs", "Turismo y Hostelería", fecha_hoy))
+    except Exception as e:
+        print(f"Error Turijobs: {e}")
+    return ofertas
+
+
+def buscar_talent_spain(fecha_hoy):
+    ofertas = []
+    try:
+        res = requests.get("https://es.talent.com/jobs?l=Sevilla%2C+Andaluc%C3%ADa", headers=HEADERS, timeout=10)
+        if res.status_code == 200:
+            matches = re.findall(r'<a[^>]+href=["\']([^"\']*/view\?[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
+            vistos = set()
+            for link, titulo in matches:
+                tit = re.sub(r'<[^>]+>', '', titulo).strip()
+                if not link.startswith("http"):
+                    link = "https://es.talent.com" + link
+                if link not in vistos and len(tit) > 3:
+                    vistos.add(link)
+                    ofertas.append(crear_oferta(tit, link, "Talent.com", "General", fecha_hoy))
+    except Exception as e:
+        print(f"Error Talent.com: {e}")
+    return ofertas
+
+
+def buscar_ticjob(fecha_hoy):
+    ofertas = []
+    try:
+        res = requests.get("https://ticjob.es/esp/busqueda?keywords=sevilla", headers=HEADERS, timeout=10)
+        if res.status_code == 200:
+            matches = re.findall(r'<a[^>]+href=["\']([^"\']*/esp/trabajo/[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
+            vistos = set()
+            for link, titulo in matches:
+                tit = re.sub(r'<[^>]+>', '', titulo).strip()
+                if not link.startswith("http"):
+                    link = "https://ticjob.es" + link
+                if link not in vistos and len(tit) > 3:
+                    vistos.add(link)
+                    ofertas.append(crear_oferta(tit, link, "Ticjob", "Tecnología / IT", fecha_hoy))
+    except Exception as e:
+        print(f"Error Ticjob: {e}")
+    return ofertas
+
+
+def buscar_monster_spain(fecha_hoy):
+    ofertas = []
+    try:
+        res = requests.get("https://www.monster.es/trabajo/buscar?q=&where=Sevilla", headers=HEADERS, timeout=10)
+        if res.status_code == 200:
+            matches = re.findall(r'<a[^>]+href=["\']([^"\']*/trabajo/[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
+            vistos = set()
+            for link, titulo in matches:
+                tit = re.sub(r'<[^>]+>', '', titulo).strip()
+                if not link.startswith("http"):
+                    link = "https://www.monster.es" + link
+                if link not in vistos and len(tit) > 3:
+                    vistos.add(link)
+                    ofertas.append(crear_oferta(tit, link, "Monster", "General", fecha_hoy))
+    except Exception as e:
+        print(f"Error Monster: {e}")
     return ofertas
 
 
 def main():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    print("Iniciando escaneo de empleos Sevilla/España...")
+    print("Iniciando rastreador masivo de empleos en España (Sevilla)...")
 
     ofertas = []
-    ofertas.extend(buscar_tecnoempleo(fecha_hoy))
-    ofertas.extend(buscar_jobicy_remoto(fecha_hoy))
+    fuentes = [
+        ("Tecnoempleo", buscar_tecnoempleo),
+        ("InfoJobs", buscar_infojobs),
+        ("Turijobs", buscar_turijobs),
+        ("Talent.com", buscar_talent_spain),
+        ("Ticjob", buscar_ticjob),
+        ("Monster", buscar_monster_spain),
+    ]
+
+    for nombre, funcion in fuentes:
+        print(f"-> Escaneando {nombre}...")
+        res = funcion(fecha_hoy)
+        print(f"   Obtenidas: {len(res)}")
+        ofertas.extend(res)
+
+    print(f"\nTOTAL DE OFERTAS LOCALES EXTRAÍDAS: {len(ofertas)}")
 
     if not ofertas:
-        print("No se han obtenido ofertas en esta ronda.")
+        print("No se encontraron ofertas en esta ejecución.")
         return
 
-    print(f"Ofertas recopiladas: {len(ofertas)}. Enviando a Make...")
-    res = requests.post(MAKE_WEBHOOK_URL, json={"jobs": ofertas}, timeout=15)
-    print(f"Petición enviada. Respuesta HTTP: {res.status_code}")
+    print("Enviando paquete completo al Webhook de Make...")
+    try:
+        res = requests.post(MAKE_WEBHOOK_URL, json={"jobs": ofertas}, timeout=15)
+        print(f"Estado de envío a Make: {res.status_code}")
+    except Exception as e:
+        print(f"Error enviando datos a Make: {e}")
 
 
 if __name__ == "__main__":
