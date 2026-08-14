@@ -1,14 +1,14 @@
 from datetime import datetime
 import os
+import xml.etree.ElementTree as ET
 import requests
 
-# URL real de tu Webhook de Make (tomada por variable de entorno o fallback)
 MAKE_WEBHOOK_URL = os.getenv(
     "MAKE_WEBHOOK_URL",
     "https://hook.eu1.make.com/tg93wwof55r5krw31joysyih2wv5qt0w",
 )
 
-# Cobertura completa de la provincia de Sevilla (Capital, Aljarafe, Vega del Guadalquivir, Campiña, Sierra, etc.)
+# Ciudades y municipios de la Provincia de Sevilla
 MUNICIPIOS_SEVILLA = [
     "sevilla",
     "seville",
@@ -44,66 +44,50 @@ MUNICIPIOS_SEVILLA = [
     "lora del río",
     "lora del rio",
     "arahal",
-    "provincia de sevilla",
-    "sevilla, españa",
-    "sevilla, spain",
 ]
 
 
-def es_oferta_de_sevilla(*textos):
+def es_de_sevilla(ubicacion, titulo):
+    """Verifica estrictamente si la oferta pertenece a la provincia de Sevilla."""
+    texto = f"{ubicacion} {titulo}".lower()
+    return any(m in texto for m in MUNICIPIOS_SEVILLA)
+
+
+def buscar_jooble(fecha_hoy):
     """
-    Comprueba si alguno de los textos pasados contiene mención a los municipios/zonas de Sevilla.
+    Busca ofertas en Jooble España filtrando directamente por 'Sevilla'.
+    (Si tienes API Key de Jooble la puedes pasar por JOOBLE_API_KEY)
     """
-    for texto in textos:
-        if not texto:
-            continue
-        texto_minusc = texto.lower()
-        if any(municipio in texto_minusc for municipio in MUNICIPIOS_SEVILLA):
-            return True
-    return False
+    api_key = os.getenv("JOOBLE_API_KEY", "")
+    if not api_key:
+        return []
 
+    ofertas = []
+    try:
+        url = f"https://es.jooble.org/api/{api_key}"
+        body = {"location": "Sevilla", "keywords": ""}
+        headers = {"Content-Type": "application/json"}
 
-def buscar_empleos():
-    print("Iniciando rastreo de empleos para toda la provincia de Sevilla...")
-    ofertas_encontradas = []
-    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+        res = requests.post(url, json=body, headers=headers, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            for j in data.get("jobs", []):
+                tit = j.get("title", "")
+                loc = j.get("location", "")
 
-    # BÚSQUEDA EN API (Recorremos hasta 3 páginas para abarcar más ofertas globales)
-    base_url = "https://www.arbeitnow.com/api/job-board-api"
-    
-    for page in range(1, 4):
-        try:
-            url = f"{base_url}?page={page}"
-            respuesta = requests.get(url, timeout=10)
-
-            if respuesta.status_code == 200:
-                datos = respuesta.json()
-                puestos = datos.get("data", [])
-                
-                if not puestos:
-                    break
-
-                for puesto in puestos:
-                    ubicacion = puesto.get("location", "")
-                    titulo = puesto.get("title", "")
-                    descripcion = puesto.get("description", "")
-
-                    # Evaluamos ubicación, título y descripción por si mencionan la zona
-                    if es_oferta_de_sevilla(ubicacion, titulo, descripcion):
-                        remote = puesto.get("remote", False)
-                        job_location = "remote" if remote else "onsite"
-
-                        ofertas_encontradas.append({
-                            "job_title": puesto.get("title", ""),
+                if es_de_sevilla(loc, tit):
+                    ofertas.append(
+                        {
+                            "job_title": tit,
                             "job_type": "fulltime",
-                            "company_name": puesto.get("company_name", ""),
-                            "company_url": puesto.get("url", ""),
+                            "company_name": j.get("company", "Empresa en Sevilla"),
+                            "company_url": j.get("link", ""),
                             "company_logo": "",
-                            "job_location": job_location,
-                            "office_location": ubicacion if ubicacion else "Sevilla, España",
+                            "job_location": "onsite",
+                            "office_location": loc if loc else "Sevilla, España",
                             "location_limits": "España",
-                            "description": puesto.get("description", ""),
-                            "apply_url": puesto.get("url", ""),
+                            "description": j.get("snippet", ""),
+                            "apply_url": j.get("link", ""),
                             "apply_email": "",
                             "salary_min": "",
                             "salary_maximum": "",
@@ -115,23 +99,88 @@ def buscar_empleos():
                             "post_state": "published",
                             "date_posted": fecha_hoy,
                             "category_name": "General",
-                        })
-        except Exception as e:
-            print(f"Error al consultar la página {page} de la API: {e}")
+                        }
+                    )
+    except Exception as e:
+        print(f"Error consultando Jooble: {e}")
 
-    return ofertas_encontradas
+    return ofertas
+
+
+def buscar_feeds_rss_espana(fecha_hoy):
+    """
+    Rastrea feeds públicos de ofertas de trabajo en España filtrando por Sevilla.
+    """
+    ofertas = []
+    # Lista de feeds RSS de empleo en España
+    rss_urls = [
+        "https://www.tecnempleo.com/busqueda-empleo.asp?te=sevilla&format=rss",
+    ]
+
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    for feed_url in rss_urls:
+        try:
+            res = requests.get(feed_url, headers=headers, timeout=10)
+            if res.status_code == 200:
+                root = ET.fromstring(res.content)
+                for item in root.findall(".//item"):
+                    tit = item.findtext("title", "")
+                    link = item.findtext("link", "")
+                    desc = item.findtext("description", "")
+
+                    if es_de_sevilla(tit, desc):
+                        ofertas.append(
+                            {
+                                "job_title": tit,
+                                "job_type": "fulltime",
+                                "company_name": "Portal Empleo España",
+                                "company_url": link,
+                                "company_logo": "",
+                                "job_location": "onsite",
+                                "office_location": "Sevilla, España",
+                                "location_limits": "España",
+                                "description": desc,
+                                "apply_url": link,
+                                "apply_email": "",
+                                "salary_min": "",
+                                "salary_maximum": "",
+                                "salary_currency": "EUR",
+                                "salary_schedule": "yearly",
+                                "highlighted": "FALSE",
+                                "sticky": "FALSE",
+                                "post_length": "30",
+                                "post_state": "published",
+                                "date_posted": fecha_hoy,
+                                "category_name": "Empleo",
+                            }
+                        )
+        except Exception as e:
+            print(f"Error leyendo feed RSS ({feed_url}): {e}")
+
+    return ofertas
+
+
+def buscar_empleos():
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    print("Iniciando rastreo EXCLUSIVO para la provincia de Sevilla...")
+
+    todas = []
+    todas.extend(buscar_jooble(fecha_hoy))
+    todas.extend(buscar_feeds_rss_espana(fecha_hoy))
+
+    print(f"Total de ofertas reales encontradas en Sevilla: {len(todas)}")
+    return todas
 
 
 def enviar_a_make(ofertas):
     if not ofertas:
-        print("No se encontraron ofertas reales nuevas para la provincia de Sevilla en este pase.")
+        print("No se han encontrado ofertas nuevas en la provincia de Sevilla hoy.")
         return
 
     payload = {"jobs": ofertas}
     respuesta = requests.post(MAKE_WEBHOOK_URL, json=payload, timeout=10)
-    print(
-        f"Enviadas {len(ofertas)} ofertas reales a Make. Respuesta servidor: {respuesta.status_code}"
-    )
+    print(f"Enviadas {len(ofertas)} ofertas a Make. Status: {respuesta.status_code}")
 
 
 if __name__ == "__main__":
