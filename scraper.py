@@ -1,7 +1,9 @@
 from datetime import datetime
+import json
 import re
 import requests
 
+# URL de tu Webhook en Make
 MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/tg93wwof55r5krw31joysyih2wv5qt0w"
 
 HEADERS = {
@@ -10,12 +12,12 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/json,*/*",
+    "Accept": "application/json, text/html",
 }
 
 
 def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
-    """Estructura exacta para Iglubit / Make / Google Sheets."""
+    """Estructura estandarizada para Iglubit / Jobboardly."""
     return {
         "job_title": titulo,
         "job_type": "fulltime",
@@ -25,7 +27,10 @@ def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
         "job_location": "onsite",
         "office_location": ubicacion if ubicacion else "Sevilla, España",
         "location_limits": "España",
-        "description": f"<p>{descripcion}</p><p>Acceso directo al portal de <strong>{empresa}</strong>: <a href='{link}'>Ver vacante oficial</a>.</p>",
+        "description": (
+            f"<p>{descripcion}</p><p>Inscríbete directamente en el portal oficial "
+            f"de <strong>{empresa}</strong>: <a href='{link}'>Ver oferta corporativa</a>.</p>"
+        ),
         "apply_url": link,
         "apply_email": "",
         "salary_min": "",
@@ -41,129 +46,179 @@ def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
     }
 
 
-# ---------------------------------------------------------------------------
-# EXTRACTOR NATIVO CON REGEX (SIN BEAUTIFULSOUP)
-# ---------------------------------------------------------------------------
-
-
-def buscar_puestos_en_html(url, empresa_nombre, fecha_hoy):
-    """Lee el HTML de cualquier web corporativa y busca enlaces con texto de empleo usando solo Regex nativo."""
+# ===========================================================================
+# MOTOR 1: WORKABLE PUBLIC EXPLORER
+# ===========================================================================
+def extraer_workable_masivo(fecha_hoy):
     ofertas = []
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=10)
-        if res.status_code == 200:
-            html = res.text
+    print("-> Escaneando motor masivo Workable...")
 
-            # Busca enlaces HTML de tipo <a href="...">Texto</a>
-            patron = r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>'
-            coincidencias = re.findall(patron, html, re.IGNORECASE | re.DOTALL)
+    terminos_busqueda = ["Sevilla", "Andalucia", "Spain"]
 
-            palabras_clave = [
-                "ingeniero",
-                "técnico",
-                "operario",
-                "desarrollador",
-                "manager",
-                "mantenimiento",
-                "vacante",
-                "oferta",
-                "responsable",
-            ]
+    for termino in terminos_busqueda:
+        url = "https://www.workable.com/api/v3/accounts/jobs"
+        params = {"query": termino, "state": "published"}
 
-            for link, texto in coincidencias:
-                # Limpiar etiquetas HTML residuales del texto
-                texto_limpio = re.sub(r"<[^>]+>", "", texto).strip()
+        try:
+            res = requests.get(url, headers=HEADERS, params=params, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                for job in data.get("jobs", []):
+                    titulo = job.get("title", "").strip()
+                    empresa = job.get("company", {}).get("name", "Empresa Final")
+                    link = job.get("url", "")
+                    loc = job.get("location", {})
+                    city = loc.get("city", "")
+                    country = loc.get("country", "")
 
-                if any(p in texto_limpio.lower() for p in palabras_clave):
-                    if 8 < len(texto_limpio) < 90:
-                        url_final = (
-                            link
-                            if link.startswith("http")
-                            else f"{url.rstrip('/')}/{link.lstrip('/')}"
-                        )
-                        desc = f"Oferta extraída directamente de la web corporativa de {empresa_nombre}."
+                    ubicacion_str = f"{city}, {country}".strip(", ")
+
+                    # Evitamos duplicados locales
+                    if not any(o["apply_url"] == link for o in ofertas):
+                        desc = f"Puesto corporativo publicado por {empresa} a través de su canal oficial de selección."
                         ofertas.append(
                             crear_oferta(
-                                texto_limpio,
-                                url_final,
-                                empresa_nombre,
-                                "Sevilla",
-                                desc,
-                                fecha_hoy,
+                                titulo, link, empresa, ubicacion_str, desc, fecha_hoy
                             )
                         )
-    except Exception as e:
-        print(f"No se pudo analizar {empresa_nombre}: {e}")
+        except Exception as e:
+            print(f"   [Workable Error]: {e}")
 
     return ofertas
 
 
-# ---------------------------------------------------------------------------
-# EJECUCIÓN PRINCIPAL
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# MOTOR 2: SMARTRECRUITERS PUBLIC SEARCH
+# ===========================================================================
+def extraer_smartrecruiters_masivo(fecha_hoy):
+    ofertas = []
+    print("-> Escaneando motor masivo SmartRecruiters...")
+
+    url = "https://api.smartrecruiters.com/v1/companies/postings"
+    params = {"country": "es", "limit": 100}
+
+    try:
+        res = requests.get(url, headers=HEADERS, params=params, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            for job in data.get("content", []):
+                titulo = job.get("name", "").strip()
+                empresa = job.get("company", {}).get("name", "Empresa Cliente")
+                job_id = job.get("id", "")
+                company_identifier = job.get("company", {}).get("identifier", "")
+
+                link = f"https://jobs.smartrecruiters.com/{company_identifier}/{job_id}"
+                city = job.get("location", {}).get("city", "")
+                region = job.get("location", {}).get("region", "")
+
+                ubicacion_str = f"{city}, {region}".strip(", ")
+
+                desc = f"Oferta corporativa oficial en la plataforma de selección de {empresa}."
+                ofertas.append(
+                    crear_oferta(
+                        titulo, link, empresa, ubicacion_str, desc, fecha_hoy
+                    )
+                )
+    except Exception as e:
+        print(f"   [SmartRecruiters Error]: {e}")
+
+    return ofertas
 
 
+# ===========================================================================
+# MOTOR 3: PERSONIO BATCH (Empresas con subdominios verificados)
+# ===========================================================================
+def extraer_personio_batch(fecha_hoy):
+    ofertas = []
+    print("-> Escaneando lote de portales Personio...")
+
+    SLUGS_PERSONIO = [
+        ("CoverManager", "covermanager"),
+        ("Emergya", "emergya"),
+        ("Tier1", "tier1"),
+        ("Galgus", "galgus"),
+        ("Inerco", "inerco"),
+        ("Ghenova", "ghenova"),
+        ("Clikalia", "clikalia"),
+        ("Scalpers", "scalpers"),
+        ("Tradeinn", "tradeinn"),
+        ("Jobandtalent", "jobandtalent"),
+    ]
+
+    for nombre, slug in SLUGS_PERSONIO:
+        url = f"https://{slug}.personio.de/xml"
+        try:
+            res = requests.get(url, headers=HEADERS, timeout=6)
+            if res.status_code == 200:
+                positions = re.findall(
+                    r"<position>(.*?)</position>", res.text, re.DOTALL
+                )
+                for pos in positions:
+                    titulo_match = re.search(r"<name><!\[CDATA\[(.*?)\]\]></name>", pos) or re.search(r"<name>(.*?)</name>", pos)
+                    id_match = re.search(r"<id>(.*?)</id>", pos)
+                    office_match = re.search(r"<office>(.*?)</office>", pos)
+
+                    if titulo_match and id_match:
+                        titulo = titulo_match.group(1).strip()
+                        job_id = id_match.group(1).strip()
+                        office = office_match.group(1).strip() if office_match else "España"
+
+                        link = f"https://{slug}.personio.de/job/{job_id}"
+                        desc = f"Puesto corporativo oficial en la web de {nombre}."
+                        ofertas.append(
+                            crear_oferta(
+                                titulo, link, nombre, office, desc, fecha_hoy
+                            )
+                        )
+        except Exception:
+            pass
+
+    return ofertas
+
+
+# ===========================================================================
+# EJECUCIÓN PRINCIPAL Y ENVÍO A MAKE
+# ===========================================================================
 def main():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    print("Escaneando directo webs de Sevilla sin librerías externas...")
+    print("=== INICIANDO EXTRACCIÓN MASIVA DE PUESTOS DIRECTOS ===")
 
     todas_ofertas = []
 
-    # Lista de webs oficiales de empleo en Sevilla
-    WEBS_SEVILLA = [
-        {
-            "nombre": "Persán",
-            "url": "https://persan.es/trabaja-con-nosotros/",
-        },
-        {
-            "nombre": "Inerco",
-            "url": "https://www.inerco.com/es/trabaja-con-nosotros/",
-        },
-        {
-            "nombre": "Grupo Ybarra",
-            "url": "https://www.ybarra.es/contacto/",
-        },
-        {
-            "nombre": "Cuadros Eléctricos Nazareno",
-            "url": "https://www.cen.es/contacto/",
-        },
-        {
-            "nombre": "Interoliva",
-            "url": "https://www.interoliva.com/",
-        },
-    ]
+    # 1. Ejecutar Workable
+    wk_jobs = extraer_workable_masivo(fecha_hoy)
+    print(f"   [+] Workable aportó: {len(wk_jobs)} ofertas.")
+    todas_ofertas.extend(wk_jobs)
 
-    for emp in WEBS_SEVILLA:
-        print(f"-> Analizando {emp['nombre']}...")
-        puestos = buscar_puestos_en_html(emp["url"], emp["nombre"], fecha_hoy)
+    # 2. Ejecutar SmartRecruiters
+    sr_jobs = extraer_smartrecruiters_masivo(fecha_hoy)
+    print(f"   [+] SmartRecruiters aportó: {len(sr_jobs)} ofertas.")
+    todas_ofertas.extend(sr_jobs)
 
-        # Si no detecta listados dinámicos en el HTML, añade el canal directo oficial
-        if not puestos:
-            puestos.append(
-                crear_oferta(
-                    titulo=f"Candidatura / Trabaja en {emp['nombre']}",
-                    link=emp["url"],
-                    empresa=emp["nombre"],
-                    ubicacion="Sevilla",
-                    descripcion=f"Acceso al canal oficial de empleo de {emp['nombre']}.",
-                    fecha_hoy=fecha_hoy,
-                )
-            )
+    # 3. Ejecutar Personio Batch
+    p_jobs = extraer_personio_batch(fecha_hoy)
+    print(f"   [+] Personio Batch aportó: {len(p_jobs)} ofertas.")
+    todas_ofertas.extend(p_jobs)
 
-        print(f"   Añadidos: {len(puestos)}")
-        todas_ofertas.extend(puestos)
+    print(f"\n>>> TOTAL ABSOLUTO OBTENIDO: {len(todas_ofertas)} TRABAJOS DE CALIDAD <<<")
 
-    print(f"\nTOTAL ELEMENTOS LISTOS PARA IGLUBIT: {len(todas_ofertas)}")
+    if not todas_ofertas:
+        print("No se extrajeron ofertas en este pase.")
+        return
 
-    if todas_ofertas:
-        print("Enviando a Make...")
+    # Enviamos en lotes de 50 para no saturar el webhook
+    LOTE_TAMANO = 50
+    print(f"\nEnviando a Make en paquetes de {LOTE_TAMANO}...")
+
+    for i in range(0, len(todas_ofertas), LOTE_TAMANO):
+        chunk = todas_ofertas[i : i + LOTE_TAMANO]
         try:
             r = requests.post(
-                MAKE_WEBHOOK_URL, json={"jobs": todas_ofertas}, timeout=15
+                MAKE_WEBHOOK_URL, json={"jobs": chunk}, timeout=20
             )
-            print(f"Respuesta Make: {r.status_code}")
+            print(f"   Lote {i // LOTE_TAMANO + 1} enviado. Respuesta Make: {r.status_code}")
         except Exception as e:
-            print(f"Error Make: {e}")
+            print(f"   Error enviando lote a Make: {e}")
 
 
 if __name__ == "__main__":
