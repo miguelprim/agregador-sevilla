@@ -14,7 +14,7 @@ def formatear_descripcion_html(texto_raw):
     if not texto_raw:
         return "<p>Sin descripción detallada.</p>"
 
-    # 1. Normalizar líneas y eliminar espacios vacíos repetidos
+    # Normalizar líneas y eliminar espacios vacíos repetidos
     lineas = [linea.strip() for linea in texto_raw.splitlines()]
 
     lineas_limpias = []
@@ -28,7 +28,7 @@ def formatear_descripcion_html(texto_raw):
             lineas_limpias.append(l)
             anterior_vacio = False
 
-    # 2. Formatear viñetas (•, -, *) y párrafos estándar
+    # Formatear viñetas (•, -, *) y párrafos estándar
     en_lista = False
     html_bloques = []
 
@@ -56,6 +56,9 @@ def formatear_descripcion_html(texto_raw):
 def crear_oferta(
     titulo, link, empresa, ubicacion, descripcion_raw, fecha_hoy, apply_url
 ):
+    # Asegurar que el título sea una cadena limpia de texto
+    titulo_limpio = str(titulo).strip() if titulo else "Oferta de Empleo"
+
     # Formatear la descripción
     descripcion_formateada = formatear_descripcion_html(descripcion_raw)
 
@@ -67,7 +70,7 @@ def crear_oferta(
     )
 
     return {
-        "job_title": titulo,
+        "job_title": titulo_limpio,
         "job_type": "fulltime",
         "company_name": empresa,
         "company_url": link,
