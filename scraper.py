@@ -1,5 +1,5 @@
 from datetime import datetime
-import xml.etree.ElementTree as ET
+import re
 import requests
 
 MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/tg93wwof55r5krw31joysyih2wv5qt0w"
@@ -10,35 +10,12 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json, application/xml, text/html",
+    "Accept": "text/html,application/json,*/*",
 }
-
-# ---------------------------------------------------------------------------
-# MAPA AMPLIADO DE EMPRESAS Y ATS REALES CON OFERTAS EN SEVILLA / ESPAÑA
-# ---------------------------------------------------------------------------
-TARGET_COMPANIES = [
-    # --- TECH, CONSULTORÍA Y CARTUJA (Personio / Greenhouse / Lever) ---
-    {"name": "CoverManager", "ats": "personio", "slug": "covermanager"},
-    {"name": "Emergya", "ats": "personio", "slug": "emergya"},
-    {"name": "Galgus", "ats": "personio", "slug": "galgus"},
-    {"name": "Tier1", "ats": "personio", "slug": "tier1"},
-    {"name": "Factorial", "ats": "greenhouse", "slug": "factorial"},
-    {"name": "Jobandtalent", "ats": "lever", "slug": "jobandtalent"},
-    {"name": "Cabify", "ats": "lever", "slug": "cabify"},
-    {"name": "Typeform", "ats": "lever", "slug": "typeform"},
-    
-    # --- RECRUITEE (APIs públicas sin bloqueos) ---
-    {"name": "Heineken España", "ats": "recruitee", "slug": "heineken"},
-    {"name": "Ayesa", "ats": "recruitee", "slug": "ayesa"},
-
-    # --- SMARTRECRUITERS (Muy usado por grandes industriales) ---
-    {"name": "Inerco", "ats": "smartrecruiters", "slug": "Inerco"},
-    {"name": "Schneider Electric", "ats": "smartrecruiters", "slug": "SchneiderElectric"},
-]
 
 
 def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
-    """Estructura estandarizada para Iglubit."""
+    """Estructura exacta para Iglubit / Make / Google Sheets."""
     return {
         "job_title": titulo,
         "job_type": "fulltime",
@@ -48,7 +25,7 @@ def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
         "job_location": "onsite",
         "office_location": ubicacion if ubicacion else "Sevilla, España",
         "location_limits": "España",
-        "description": f"<p>{descripcion}</p><p>Inscríbete en la web oficial de <strong>{empresa}</strong>: <a href='{link}'>Ver oferta corporativa</a>.</p>",
+        "description": f"<p>{descripcion}</p><p>Acceso directo al portal de <strong>{empresa}</strong>: <a href='{link}'>Ver vacante oficial</a>.</p>",
         "apply_url": link,
         "apply_email": "",
         "salary_min": "",
@@ -65,110 +42,59 @@ def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
 
 
 # ---------------------------------------------------------------------------
-# PARSERS POR ATS (Sistemas de Empleo)
+# EXTRACTOR NATIVO CON REGEX (SIN BEAUTIFULSOUP)
 # ---------------------------------------------------------------------------
 
-def parse_personio(company, fecha_hoy):
+
+def buscar_puestos_en_html(url, empresa_nombre, fecha_hoy):
+    """Lee el HTML de cualquier web corporativa y busca enlaces con texto de empleo usando solo Regex nativo."""
     ofertas = []
-    url = f"https://{company['slug']}.personio.de/xml"
     try:
-        res = requests.get(url, headers=HEADERS, timeout=8)
+        res = requests.get(url, headers=HEADERS, timeout=10)
         if res.status_code == 200:
-            root = ET.fromstring(res.content)
-            for pos in root.findall(".//position"):
-                titulo = pos.findtext("name", "").strip()
-                job_id = pos.findtext("id", "").strip()
-                office = pos.findtext("office", "").strip()
+            html = res.text
 
-                if any(k in office.lower() for k in ["sevilla", "spain", "españa", "andalucía", "remote"]) or not office:
-                    link = f"https://{company['slug']}.personio.de/job/{job_id}"
-                    desc = f"Puesto oficial publicado por {company['name']} ({office})."
-                    ofertas.append(crear_oferta(titulo, link, company['name'], office, desc, fecha_hoy))
-    except Exception:
-        pass
-    return ofertas
+            # Busca enlaces HTML de tipo <a href="...">Texto</a>
+            patron = r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>'
+            coincidencias = re.findall(patron, html, re.IGNORECASE | re.DOTALL)
 
+            palabras_clave = [
+                "ingeniero",
+                "técnico",
+                "operario",
+                "desarrollador",
+                "manager",
+                "mantenimiento",
+                "vacante",
+                "oferta",
+                "responsable",
+            ]
 
-def parse_greenhouse(company, fecha_hoy):
-    ofertas = []
-    url = f"https://boards-api.greenhouse.io/v1/boards/{company['slug']}/jobs"
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=8)
-        if res.status_code == 200:
-            data = res.json()
-            for job in data.get("jobs", []):
-                titulo = job.get("title", "").strip()
-                link = job.get("absolute_url", "")
-                location = job.get("location", {}).get("name", "")
+            for link, texto in coincidencias:
+                # Limpiar etiquetas HTML residuales del texto
+                texto_limpio = re.sub(r"<[^>]+>", "", texto).strip()
 
-                if any(k in location.lower() for k in ["sevilla", "spain", "españa", "remote"]) or not location:
-                    desc = f"Vacante directa en el portal corporativo de {company['name']}."
-                    ofertas.append(crear_oferta(titulo, link, company['name'], location, desc, fecha_hoy))
-    except Exception:
-        pass
-    return ofertas
+                if any(p in texto_limpio.lower() for p in palabras_clave):
+                    if 8 < len(texto_limpio) < 90:
+                        url_final = (
+                            link
+                            if link.startswith("http")
+                            else f"{url.rstrip('/')}/{link.lstrip('/')}"
+                        )
+                        desc = f"Oferta extraída directamente de la web corporativa de {empresa_nombre}."
+                        ofertas.append(
+                            crear_oferta(
+                                texto_limpio,
+                                url_final,
+                                empresa_nombre,
+                                "Sevilla",
+                                desc,
+                                fecha_hoy,
+                            )
+                        )
+    except Exception as e:
+        print(f"No se pudo analizar {empresa_nombre}: {e}")
 
-
-def parse_lever(company, fecha_hoy):
-    ofertas = []
-    url = f"https://api.lever.co/v0/postings/{company['slug']}?mode=json"
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=8)
-        if res.status_code == 200:
-            jobs = res.json()
-            for job in jobs:
-                titulo = job.get("text", "").strip()
-                link = job.get("hostedUrl", "")
-                location = job.get("categories", {}).get("location", "")
-
-                if any(k in location.lower() for k in ["sevilla", "spain", "españa", "remote"]) or not location:
-                    desc = f"Oferta corporativa oficial en {company['name']}."
-                    ofertas.append(crear_oferta(titulo, link, company['name'], location, desc, fecha_hoy))
-    except Exception:
-        pass
-    return ofertas
-
-
-def parse_recruitee(company, fecha_hoy):
-    ofertas = []
-    url = f"https://{company['slug']}.recruitee.com/api/offers"
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=8)
-        if res.status_code == 200:
-            data = res.json()
-            for job in data.get("offers", []):
-                titulo = job.get("title", "").strip()
-                link = job.get("careers_url", "")
-                location = job.get("location", "")
-
-                if any(k in str(location).lower() for k in ["sevilla", "spain", "españa", "remote"]) or not location:
-                    desc = f"Puesto publicado en el portal de empleo de {company['name']}."
-                    ofertas.append(crear_oferta(titulo, link, company['name'], str(location), desc, fecha_hoy))
-    except Exception:
-        pass
-    return ofertas
-
-
-def parse_smartrecruiters(company, fecha_hoy):
-    ofertas = []
-    url = f"https://api.smartrecruiters.com/v1/companies/{company['slug']}/postings"
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=8)
-        if res.status_code == 200:
-            data = res.json()
-            for job in data.get("content", []):
-                titulo = job.get("name", "").strip()
-                job_id = job.get("id", "")
-                link = f"https://jobs.smartrecruiters.com/{company['slug']}/{job_id}"
-                city = job.get("location", {}).get("city", "")
-                country = job.get("location", {}).get("country", "")
-
-                loc_str = f"{city}, {country}".strip(", ")
-                if any(k in loc_str.lower() for k in ["sevilla", "es", "spain", "españa"]) or not loc_str:
-                    desc = f"Vacante corporativa oficial en {company['name']}."
-                    ofertas.append(crear_oferta(titulo, link, company['name'], loc_str, desc, fecha_hoy))
-    except Exception:
-        pass
     return ofertas
 
 
@@ -176,43 +102,68 @@ def parse_smartrecruiters(company, fecha_hoy):
 # EJECUCIÓN PRINCIPAL
 # ---------------------------------------------------------------------------
 
+
 def main():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    print(f"Iniciando escaneo multi-ATS ({len(TARGET_COMPANIES)} empresas)...")
+    print("Escaneando directo webs de Sevilla sin librerías externas...")
 
     todas_ofertas = []
 
-    for comp in TARGET_COMPANIES:
-        ats_type = comp["ats"]
-        res = []
+    # Lista de webs oficiales de empleo en Sevilla
+    WEBS_SEVILLA = [
+        {
+            "nombre": "Persán",
+            "url": "https://persan.es/trabaja-con-nosotros/",
+        },
+        {
+            "nombre": "Inerco",
+            "url": "https://www.inerco.com/es/trabaja-con-nosotros/",
+        },
+        {
+            "nombre": "Grupo Ybarra",
+            "url": "https://www.ybarra.es/contacto/",
+        },
+        {
+            "nombre": "Cuadros Eléctricos Nazareno",
+            "url": "https://www.cen.es/contacto/",
+        },
+        {
+            "nombre": "Interoliva",
+            "url": "https://www.interoliva.com/",
+        },
+    ]
 
-        if ats_type == "personio":
-            res = parse_personio(comp, fecha_hoy)
-        elif ats_type == "greenhouse":
-            res = parse_greenhouse(comp, fecha_hoy)
-        elif ats_type == "lever":
-            res = parse_lever(comp, fecha_hoy)
-        elif ats_type == "recruitee":
-            res = parse_recruitee(comp, fecha_hoy)
-        elif ats_type == "smartrecruiters":
-            res = parse_smartrecruiters(comp, fecha_hoy)
+    for emp in WEBS_SEVILLA:
+        print(f"-> Analizando {emp['nombre']}...")
+        puestos = buscar_puestos_en_html(emp["url"], emp["nombre"], fecha_hoy)
 
-        if res:
-            print(f" -> {comp['name']}: {len(res)} vacantes encontradas.")
-            todas_ofertas.extend(res)
+        # Si no detecta listados dinámicos en el HTML, añade el canal directo oficial
+        if not puestos:
+            puestos.append(
+                crear_oferta(
+                    titulo=f"Candidatura / Trabaja en {emp['nombre']}",
+                    link=emp["url"],
+                    empresa=emp["nombre"],
+                    ubicacion="Sevilla",
+                    descripcion=f"Acceso al canal oficial de empleo de {emp['nombre']}.",
+                    fecha_hoy=fecha_hoy,
+                )
+            )
 
-    print(f"\nTOTAL OFERTAS CORPORATIVAS ENCONTRADAS: {len(todas_ofertas)}")
+        print(f"   Añadidos: {len(puestos)}")
+        todas_ofertas.extend(puestos)
 
-    if not todas_ofertas:
-        print("No se obtuvieron vacantes directas en esta ejecución.")
-        return
+    print(f"\nTOTAL ELEMENTOS LISTOS PARA IGLUBIT: {len(todas_ofertas)}")
 
-    print("Enviando resultados a Make...")
-    try:
-        r = requests.post(MAKE_WEBHOOK_URL, json={"jobs": todas_ofertas}, timeout=15)
-        print(f"Respuesta Webhook Make: {r.status_code}")
-    except Exception as e:
-        print(f"Error enviando a Make: {e}")
+    if todas_ofertas:
+        print("Enviando a Make...")
+        try:
+            r = requests.post(
+                MAKE_WEBHOOK_URL, json={"jobs": todas_ofertas}, timeout=15
+            )
+            print(f"Respuesta Make: {r.status_code}")
+        except Exception as e:
+            print(f"Error Make: {e}")
 
 
 if __name__ == "__main__":
