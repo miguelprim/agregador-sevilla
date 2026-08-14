@@ -1,8 +1,9 @@
 from datetime import datetime
+import xml.etree.ElementTree as ET
 import re
 import requests
 
-# URL fija para evitar fallos de entorno en GitHub Actions
+# URL de tu Webhook de Make
 MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/tg93wwof55r5krw31joysyih2wv5qt0w"
 
 MUNICIPIOS_SEVILLA = [
@@ -20,22 +21,21 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept-Language": "es-ES,es;q=0.9",
+    "Accept": "application/rss+xml, application/xml, text/xml, */*",
 }
 
 
 def crear_oferta(titulo, link, portal, categoria, fecha_hoy):
-    """Estructura normalizada para Google Sheets y Jobboardly."""
     return {
         "job_title": titulo,
         "job_type": "fulltime",
-        "company_name": f"Empresa en Sevilla ({portal})",
+        "company_name": f"Empresa local ({portal})",
         "company_url": link,
         "company_logo": "",
         "job_location": "onsite",
         "office_location": "Sevilla, España",
         "location_limits": "España",
-        "description": f"<p>Oferta de empleo publicada en Sevilla: <strong>{titulo}</strong>. Consulta todos los detalles e inscríbete a través de <a href='{link}'>{portal}</a>.</p>",
+        "description": f"<p>Oferta publicada en Sevilla: <strong>{titulo}</strong>. Inscríbete en <a href='{link}'>{portal}</a>.</p>",
         "apply_url": link,
         "apply_email": "",
         "salary_min": "",
@@ -51,152 +51,79 @@ def crear_oferta(titulo, link, portal, categoria, fecha_hoy):
     }
 
 
-def buscar_tecnoempleo(fecha_hoy):
+def buscar_tecnoempleo_rss(fecha_hoy):
+    """Extrae ofertas usando el feed RSS oficial de Tecnoempleo."""
     ofertas = []
+    url = "https://www.tecnoempleo.com/feeds/rss-empleo-sevilla.xml"
+    print("Obteniendo RSS Tecnoempleo Sevilla...")
     try:
-        res = requests.get("https://www.tecnoempleo.com/busqueda-empleo.asp?te=sevilla", headers=HEADERS, timeout=10)
+        res = requests.get(url, headers=HEADERS, timeout=12)
         if res.status_code == 200:
-            matches = re.findall(r'<a[^>]+href=["\']([^"\']*/-/[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
+            root = ET.fromstring(res.content)
             vistos = set()
-            for link, titulo in matches:
-                tit = re.sub(r'<[^>]+>', '', titulo).strip()
-                if not link.startswith("http"):
-                    link = "https://www.tecnoempleo.com/" + link.lstrip("/")
-                if link not in vistos and len(tit) > 3:
-                    vistos.add(link)
-                    ofertas.append(crear_oferta(tit, link, "Tecnoempleo", "Tecnología / IT", fecha_hoy))
+            for item in root.findall(".//item"):
+                title_elem = item.find("title")
+                link_elem = item.find("link")
+                if title_elem is not None and link_elem is not None:
+                    tit = title_elem.text.strip() if title_elem.text else ""
+                    link = link_elem.text.strip() if link_elem.text else ""
+                    if link not in vistos and len(tit) > 3:
+                        vistos.add(link)
+                        ofertas.append(crear_oferta(tit, link, "Tecnoempleo", "Tecnología / IT", fecha_hoy))
     except Exception as e:
-        print(f"Error Tecnoempleo: {e}")
+        print(f"Error en RSS Tecnoempleo: {e}")
     return ofertas
 
 
-def buscar_infojobs(fecha_hoy):
+def buscar_jooble_sevilla(fecha_hoy):
+    """Consulta ofertas de Sevilla a través de agregador abierto."""
     ofertas = []
+    url = "https://es.jooble.org/api/feed/sevilla"
+    print("Obteniendo Feed Jooble Sevilla...")
     try:
-        res = requests.get("https://www.infojobs.net/ofertas-trabajo/sevilla", headers=HEADERS, timeout=10)
+        res = requests.get(url, headers=HEADERS, timeout=12)
         if res.status_code == 200:
-            matches = re.findall(r'<a[^>]+href=["\']([^"\']*infojobs\.net/of-[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
+            html = res.text
+            matches = re.findall(r'<a[^>]+href=["\']([^"\']*)["\'][^>]*>(.*?)</a>', html, re.IGNORECASE)
             vistos = set()
             for link, titulo in matches:
                 tit = re.sub(r'<[^>]+>', '', titulo).strip()
-                if link.startswith("//"):
-                    link = "https:" + link
-                if link not in vistos and len(tit) > 4:
+                if "job" in link.lower() and link not in vistos and len(tit) > 5:
                     vistos.add(link)
-                    ofertas.append(crear_oferta(tit, link, "InfoJobs", "General", fecha_hoy))
+                    ofertas.append(crear_oferta(tit, link, "Jooble España", "General", fecha_hoy))
     except Exception as e:
-        print(f"Error InfoJobs: {e}")
-    return ofertas
-
-
-def buscar_turijobs(fecha_hoy):
-    ofertas = []
-    try:
-        res = requests.get("https://www.turijobs.com/ofertas-trabajo-sevilla", headers=HEADERS, timeout=10)
-        if res.status_code == 200:
-            matches = re.findall(r'<a[^>]+href=["\']([^"\']*/oferta-[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
-            vistos = set()
-            for link, titulo in matches:
-                tit = re.sub(r'<[^>]+>', '', titulo).strip()
-                if not link.startswith("http"):
-                    link = "https://www.turijobs.com" + link
-                if link not in vistos and len(tit) > 3:
-                    vistos.add(link)
-                    ofertas.append(crear_oferta(tit, link, "Turijobs", "Turismo y Hostelería", fecha_hoy))
-    except Exception as e:
-        print(f"Error Turijobs: {e}")
-    return ofertas
-
-
-def buscar_talent_spain(fecha_hoy):
-    ofertas = []
-    try:
-        res = requests.get("https://es.talent.com/jobs?l=Sevilla%2C+Andaluc%C3%ADa", headers=HEADERS, timeout=10)
-        if res.status_code == 200:
-            matches = re.findall(r'<a[^>]+href=["\']([^"\']*/view\?[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
-            vistos = set()
-            for link, titulo in matches:
-                tit = re.sub(r'<[^>]+>', '', titulo).strip()
-                if not link.startswith("http"):
-                    link = "https://es.talent.com" + link
-                if link not in vistos and len(tit) > 3:
-                    vistos.add(link)
-                    ofertas.append(crear_oferta(tit, link, "Talent.com", "General", fecha_hoy))
-    except Exception as e:
-        print(f"Error Talent.com: {e}")
-    return ofertas
-
-
-def buscar_ticjob(fecha_hoy):
-    ofertas = []
-    try:
-        res = requests.get("https://ticjob.es/esp/busqueda?keywords=sevilla", headers=HEADERS, timeout=10)
-        if res.status_code == 200:
-            matches = re.findall(r'<a[^>]+href=["\']([^"\']*/esp/trabajo/[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
-            vistos = set()
-            for link, titulo in matches:
-                tit = re.sub(r'<[^>]+>', '', titulo).strip()
-                if not link.startswith("http"):
-                    link = "https://ticjob.es" + link
-                if link not in vistos and len(tit) > 3:
-                    vistos.add(link)
-                    ofertas.append(crear_oferta(tit, link, "Ticjob", "Tecnología / IT", fecha_hoy))
-    except Exception as e:
-        print(f"Error Ticjob: {e}")
-    return ofertas
-
-
-def buscar_monster_spain(fecha_hoy):
-    ofertas = []
-    try:
-        res = requests.get("https://www.monster.es/trabajo/buscar?q=&where=Sevilla", headers=HEADERS, timeout=10)
-        if res.status_code == 200:
-            matches = re.findall(r'<a[^>]+href=["\']([^"\']*/trabajo/[^"\']+)["\'][^>]*>(.*?)</a>', res.text, re.IGNORECASE)
-            vistos = set()
-            for link, titulo in matches:
-                tit = re.sub(r'<[^>]+>', '', titulo).strip()
-                if not link.startswith("http"):
-                    link = "https://www.monster.es" + link
-                if link not in vistos and len(tit) > 3:
-                    vistos.add(link)
-                    ofertas.append(crear_oferta(tit, link, "Monster", "General", fecha_hoy))
-    except Exception as e:
-        print(f"Error Monster: {e}")
+        print(f"Error en Jooble Sevilla: {e}")
     return ofertas
 
 
 def main():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    print("Iniciando rastreador masivo de empleos en España (Sevilla)...")
+    print("Iniciando rastreador inmune a bloqueos (Sevilla)...")
 
     ofertas = []
-    fuentes = [
-        ("Tecnoempleo", buscar_tecnoempleo),
-        ("InfoJobs", buscar_infojobs),
-        ("Turijobs", buscar_turijobs),
-        ("Talent.com", buscar_talent_spain),
-        ("Ticjob", buscar_ticjob),
-        ("Monster", buscar_monster_spain),
-    ]
+    
+    # 1. Tecnoempleo RSS
+    tecno_jobs = buscar_tecnoempleo_rss(fecha_hoy)
+    print(f"-> Tecnoempleo RSS: {len(tecno_jobs)} ofertas")
+    ofertas.extend(tecno_jobs)
 
-    for nombre, funcion in fuentes:
-        print(f"-> Escaneando {nombre}...")
-        res = funcion(fecha_hoy)
-        print(f"   Obtenidas: {len(res)}")
-        ofertas.extend(res)
+    # 2. Jooble Sevilla
+    jooble_jobs = buscar_jooble_sevilla(fecha_hoy)
+    print(f"-> Jooble Sevilla: {len(jooble_jobs)} ofertas")
+    ofertas.extend(jooble_jobs)
 
-    print(f"\nTOTAL DE OFERTAS LOCALES EXTRAÍDAS: {len(ofertas)}")
+    print(f"\nTOTAL OFERTAS EXTRAÍDAS: {len(ofertas)}")
 
     if not ofertas:
-        print("No se encontraron ofertas en esta ejecución.")
+        print("No se encontraron ofertas en esta ronda.")
         return
 
-    print("Enviando paquete completo al Webhook de Make...")
+    print("Enviando ofertas a Make...")
     try:
         res = requests.post(MAKE_WEBHOOK_URL, json={"jobs": ofertas}, timeout=15)
-        print(f"Estado de envío a Make: {res.status_code}")
+        print(f"Respuesta Webhook Make: {res.status_code}")
     except Exception as e:
-        print(f"Error enviando datos a Make: {e}")
+        print(f"Error enviando a Make: {e}")
 
 
 if __name__ == "__main__":
