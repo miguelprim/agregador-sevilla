@@ -3,10 +3,7 @@ import os
 import re
 import requests
 
-MAKE_WEBHOOK_URL = os.getenv(
-    "MAKE_WEBHOOK_URL",
-    "https://hook.eu1.make.com/tg93wwof55r5krw31joysyih2wv5qt0w",
-)
+MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/tg93wwof55r5krw31joysyih2wv5qt0w"
 
 MUNICIPIOS_SEVILLA = [
     "sevilla", "seville", "dos hermanas", "alcalá de guadaíra", "alcala de guadaira",
