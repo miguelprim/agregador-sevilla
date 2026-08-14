@@ -1,14 +1,16 @@
-import asyncio
 from datetime import datetime
-from playwright.async_api import async_playwright
 import requests
 
-# URL de tu Webhook en Make
+# 1. Pega tu API Key de SerpApi entre las comillas
+SERPAPI_KEY = "TU_API_KEY_AQUI"
+
+# 2. Tu Webhook de Make
 MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/tg93wwof55r5krw31joysyih2wv5qt0w"
 
 
-def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
-    """Estructura estandarizada para Iglubit / Jobboardly."""
+def crear_oferta(
+    titulo, link, empresa, ubicacion, descripcion, fecha_hoy, apply_url
+):
     return {
         "job_title": titulo,
         "job_type": "fulltime",
@@ -20,9 +22,9 @@ def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
         "location_limits": "España",
         "description": (
             f"<div>{descripcion}</div><br><p>Oferta extraída vía Google Jobs. "
-            f"Inscríbete en la fuente original: <a href='{link}' target='_blank'>Ver oferta completa</a>.</p>"
+            f"Inscríbete en la fuente original: <a href='{apply_url}' target='_blank'>Ver oferta completa</a>.</p>"
         ),
-        "apply_url": link,
+        "apply_url": apply_url,
         "apply_email": "",
         "salary_min": "",
         "salary_maximum": "",
@@ -37,123 +39,70 @@ def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
     }
 
 
-async def extraer_ofertas_google_jobs(query, limite_scrolls=4):
+def obtener_ofertas_serpapi(query):
+    url = "https://serpapi.com/search.json"
+    params = {
+        "engine": "google_jobs",
+        "q": query,
+        "location": "Seville, Andalusia, Spain",
+        "hl": "es",
+        "gl": "es",
+        "api_key": SERPAPI_KEY,
+    }
+
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     ofertas = []
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            locale="es-ES",
+    try:
+        response = requests.get(url, params=params, timeout=15)
+        data = response.json()
+
+        jobs_results = data.get("jobs_results", [])
+        print(
+            f"-> Búsqueda '{query}': {len(jobs_results)} ofertas encontradas."
         )
-        page = await context.new_page()
 
-        url = f"https://www.google.com/search?q={query}&ibp=htl;jobs"
-        print(f"-> Navegando a Google Jobs: '{query}'...")
-        await page.goto(url, wait_until="networkidle")
+        for job in jobs_results:
+            titulo = job.get("title", "Oferta de Empleo")
+            empresa = job.get("company_name", "Empresa Local")
+            ubicacion = job.get("location", "Sevilla, España")
+            descripcion = job.get("description", "Sin descripción detallada.")
 
-        # Gestor de cookies
-        try:
-            btn_cookies = page.locator(
-                "button:has-text('Aceptar todo'), button:has-text('Accept all')"
+            # Buscar link de aplicación directa
+            apply_options = job.get("apply_options", [])
+            apply_url = (
+                apply_options[0].get("link", "")
+                if apply_options
+                else "https://google.com"
             )
-            if await btn_cookies.count() > 0:
-                await btn_cookies.first.click()
-                await page.wait_for_timeout(1000)
-        except Exception:
-            pass
+            company_link = apply_url
 
-        # Scroll para cargar ofertas
-        print("   [+] Cargando resultados con scroll...")
-        for _ in range(limite_scrolls):
-            await page.mouse.wheel(0, 1500)
-            await page.wait_for_timeout(1500)
-
-        tarjetas = page.locator("li.iA9if, div.iA9if")
-        total_tarjetas = await tarjetas.count()
-        print(f"   [+] {total_tarjetas} ofertas encontradas en pantalla.")
-
-        for i in range(min(total_tarjetas, 25)):
-            try:
-                tarjeta = tarjetas.nth(i)
-                await tarjeta.click()
-                await page.wait_for_timeout(1000)
-
-                # Extracción de campos
-                titulo_el = page.locator("h2.KL423e").first
-                titulo = (
-                    await titulo_el.inner_text()
-                    if await titulo_el.count() > 0
-                    else "Oferta de Empleo"
+            ofertas.append(
+                crear_oferta(
+                    titulo,
+                    company_link,
+                    empresa,
+                    ubicacion,
+                    descripcion,
+                    fecha_hoy,
+                    apply_url,
                 )
+            )
 
-                empresa_el = page.locator("div.vP10Bf").first
-                empresa = (
-                    await empresa_el.inner_text()
-                    if await empresa_el.count() > 0
-                    else "Empresa Local"
-                )
-
-                ubicacion_el = page.locator("div.Qk8fB").first
-                ubicacion = (
-                    await ubicacion_el.inner_text()
-                    if await ubicacion_el.count() > 0
-                    else "Sevilla, España"
-                )
-
-                desc_el = page.locator("span.HB8fbe, div.YA129b").first
-                descripcion = (
-                    await desc_el.inner_html()
-                    if await desc_el.count() > 0
-                    else "Sin descripción detallada."
-                )
-
-                link_el = page.locator(
-                    "a.p323ze, a[target='_blank']:has-text('Solicitar')"
-                ).first
-                link = (
-                    await link_el.get_attribute("href")
-                    if await link_el.count() > 0
-                    else page.url
-                )
-
-                ofertas.append(
-                    crear_oferta(
-                        titulo.strip(),
-                        link,
-                        empresa.strip(),
-                        ubicacion.strip(),
-                        descripcion,
-                        fecha_hoy,
-                    )
-                )
-                print(f"   [✓] Leída: {titulo.strip()} - {empresa.strip()}")
-
-            except Exception as e:
-                print(f"   [!] Error en tarjeta {i}: {e}")
-
-        await browser.close()
+    except Exception as e:
+        print(f"Error consultando SerpApi: {e}")
 
     return ofertas
 
 
-async def main():
-    print("=== SCRAPER IGLUBIT GOOGLE JOBS ===")
+def main():
+    print("=== SCRAPER GOOGLE JOBS (SERPAPI) ===")
 
-    BUSQUEDAS = [
-        "empleo Sevilla",
-        "ofertas trabajo Sevilla",
-    ]
-
+    busquedas = ["empleo Sevilla", "trabajo Sevilla"]
     todas_ofertas = []
 
-    for query in BUSQUEDAS:
-        ofertas = await extraer_ofertas_google_jobs(query, limite_scrolls=4)
+    for q in busquedas:
+        ofertas = obtener_ofertas_serpapi(q)
         for o in ofertas:
             if not any(
                 x["job_title"] == o["job_title"]
@@ -162,7 +111,7 @@ async def main():
             ):
                 todas_ofertas.append(o)
 
-    print(f"\n>>> TOTAL DE OFERTAS: {len(todas_ofertas)} <<<")
+    print(f"\n>>> TOTAL OFERTAS UNICAS: {len(todas_ofertas)} <<<")
 
     if todas_ofertas:
         print("Enviando a Make...")
@@ -176,4 +125,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
