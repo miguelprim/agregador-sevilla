@@ -12,12 +12,12 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json, text/html",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
 }
 
 
 def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
-    """Estructura estandarizada para Iglubit / Jobboardly."""
+    """Estructura estandarizada limpia para Iglubit / Jobboardly."""
     return {
         "job_title": titulo,
         "job_type": "fulltime",
@@ -47,178 +47,222 @@ def crear_oferta(titulo, link, empresa, ubicacion, descripcion, fecha_hoy):
 
 
 # ===========================================================================
-# MOTOR 1: WORKABLE PUBLIC EXPLORER
+# 1. PERSONIO XML FEEDS (Empresas en España y Andalucía)
 # ===========================================================================
-def extraer_workable_masivo(fecha_hoy):
+def extraer_personio(empresas, fecha_hoy):
     ofertas = []
-    print("-> Escaneando motor masivo Workable...")
-
-    terminos_busqueda = ["Sevilla", "Andalucia", "Spain"]
-
-    for termino in terminos_busqueda:
-        url = "https://www.workable.com/api/v3/accounts/jobs"
-        params = {"query": termino, "state": "published"}
-
-        try:
-            res = requests.get(url, headers=HEADERS, params=params, timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                for job in data.get("jobs", []):
-                    titulo = job.get("title", "").strip()
-                    empresa = job.get("company", {}).get("name", "Empresa Final")
-                    link = job.get("url", "")
-                    loc = job.get("location", {})
-                    city = loc.get("city", "")
-                    country = loc.get("country", "")
-
-                    ubicacion_str = f"{city}, {country}".strip(", ")
-
-                    # Evitamos duplicados locales
-                    if not any(o["apply_url"] == link for o in ofertas):
-                        desc = f"Puesto corporativo publicado por {empresa} a través de su canal oficial de selección."
-                        ofertas.append(
-                            crear_oferta(
-                                titulo, link, empresa, ubicacion_str, desc, fecha_hoy
-                            )
-                        )
-        except Exception as e:
-            print(f"   [Workable Error]: {e}")
-
-    return ofertas
-
-
-# ===========================================================================
-# MOTOR 2: SMARTRECRUITERS PUBLIC SEARCH
-# ===========================================================================
-def extraer_smartrecruiters_masivo(fecha_hoy):
-    ofertas = []
-    print("-> Escaneando motor masivo SmartRecruiters...")
-
-    url = "https://api.smartrecruiters.com/v1/companies/postings"
-    params = {"country": "es", "limit": 100}
-
-    try:
-        res = requests.get(url, headers=HEADERS, params=params, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            for job in data.get("content", []):
-                titulo = job.get("name", "").strip()
-                empresa = job.get("company", {}).get("name", "Empresa Cliente")
-                job_id = job.get("id", "")
-                company_identifier = job.get("company", {}).get("identifier", "")
-
-                link = f"https://jobs.smartrecruiters.com/{company_identifier}/{job_id}"
-                city = job.get("location", {}).get("city", "")
-                region = job.get("location", {}).get("region", "")
-
-                ubicacion_str = f"{city}, {region}".strip(", ")
-
-                desc = f"Oferta corporativa oficial en la plataforma de selección de {empresa}."
-                ofertas.append(
-                    crear_oferta(
-                        titulo, link, empresa, ubicacion_str, desc, fecha_hoy
-                    )
-                )
-    except Exception as e:
-        print(f"   [SmartRecruiters Error]: {e}")
-
-    return ofertas
-
-
-# ===========================================================================
-# MOTOR 3: PERSONIO BATCH (Empresas con subdominios verificados)
-# ===========================================================================
-def extraer_personio_batch(fecha_hoy):
-    ofertas = []
-    print("-> Escaneando lote de portales Personio...")
-
-    SLUGS_PERSONIO = [
-        ("CoverManager", "covermanager"),
-        ("Emergya", "emergya"),
-        ("Tier1", "tier1"),
-        ("Galgus", "galgus"),
-        ("Inerco", "inerco"),
-        ("Ghenova", "ghenova"),
-        ("Clikalia", "clikalia"),
-        ("Scalpers", "scalpers"),
-        ("Tradeinn", "tradeinn"),
-        ("Jobandtalent", "jobandtalent"),
-    ]
-
-    for nombre, slug in SLUGS_PERSONIO:
+    print("-> Escaneando Personio XML Feeds...")
+    for emp_nombre, slug in empresas:
         url = f"https://{slug}.personio.de/xml"
         try:
-            res = requests.get(url, headers=HEADERS, timeout=6)
+            res = requests.get(url, headers=HEADERS, timeout=8)
             if res.status_code == 200:
                 positions = re.findall(
                     r"<position>(.*?)</position>", res.text, re.DOTALL
                 )
+                cont = 0
                 for pos in positions:
-                    titulo_match = re.search(r"<name><!\[CDATA\[(.*?)\]\]></name>", pos) or re.search(r"<name>(.*?)</name>", pos)
-                    id_match = re.search(r"<id>(.*?)</id>", pos)
-                    office_match = re.search(r"<office>(.*?)</office>", pos)
+                    titulo_m = re.search(
+                        r"<name><!\[CDATA\[(.*?)\]\]></name>", pos
+                    ) or re.search(r"<name>(.*?)</name>", pos)
+                    id_m = re.search(r"<id>(.*?)</id>", pos)
+                    office_m = re.search(
+                        r"<office><!\[CDATA\[(.*?)\]\]></office>", pos
+                    ) or re.search(r"<office>(.*?)</office>", pos)
 
-                    if titulo_match and id_match:
-                        titulo = titulo_match.group(1).strip()
-                        job_id = id_match.group(1).strip()
-                        office = office_match.group(1).strip() if office_match else "España"
-
+                    if titulo_m and id_m:
+                        titulo = titulo_m.group(1).strip()
+                        job_id = id_m.group(1).strip()
+                        office = (
+                            office_m.group(1).strip()
+                            if office_m
+                            else "España"
+                        )
                         link = f"https://{slug}.personio.de/job/{job_id}"
-                        desc = f"Puesto corporativo oficial en la web de {nombre}."
+                        desc = f"Puesto corporativo publicado por {emp_nombre} a través de su canal oficial."
+
                         ofertas.append(
                             crear_oferta(
-                                titulo, link, nombre, office, desc, fecha_hoy
+                                titulo,
+                                link,
+                                emp_nombre,
+                                office,
+                                desc,
+                                fecha_hoy,
                             )
                         )
-        except Exception:
-            pass
-
+                        cont += 1
+                print(f"   [+] {emp_nombre}: {cont} ofertas.")
+        except Exception as e:
+            print(f"   [!] Error en {emp_nombre}: {e}")
     return ofertas
 
 
 # ===========================================================================
-# EJECUCIÓN PRINCIPAL Y ENVÍO A MAKE
+# 2. GREENHOUSE JSON FEEDS LIBRES
+# ===========================================================================
+def extraer_greenhouse(empresas, fecha_hoy):
+    ofertas = []
+    print("-> Escaneando Greenhouse Board Feeds...")
+    for emp_nombre, board_token in empresas:
+        url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs"
+        try:
+            res = requests.get(url, headers=HEADERS, timeout=8)
+            if res.status_code == 200:
+                data = res.json()
+                jobs = data.get("jobs", [])
+                cont = 0
+                for job in jobs:
+                    titulo = job.get("title", "").strip()
+                    link = job.get("absolute_url", "")
+                    loc = job.get("location", {}).get("name", "España")
+
+                    desc = f"Oferta corporativa oficial en {emp_nombre}."
+                    ofertas.append(
+                        crear_oferta(
+                            titulo, link, emp_nombre, loc, desc, fecha_hoy
+                        )
+                    )
+                    cont += 1
+                print(f"   [+] {emp_nombre}: {cont} ofertas.")
+        except Exception as e:
+            print(f"   [!] Error en {emp_nombre}: {e}")
+    return ofertas
+
+
+# ===========================================================================
+# 3. LEVER POSTINGS API LIBRE
+# ===========================================================================
+def extraer_lever(empresas, fecha_hoy):
+    ofertas = []
+    print("-> Escaneando Lever API Feeds...")
+    for emp_nombre, slug in empresas:
+        url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
+        try:
+            res = requests.get(url, headers=HEADERS, timeout=8)
+            if res.status_code == 200:
+                jobs = res.json()
+                for job in jobs:
+                    titulo = job.get("text", "").strip()
+                    link = job.get("hostedUrl", "")
+                    loc = job.get("categories", {}).get(
+                        "location", "España / Remoto"
+                    )
+                    desc = f"Vacante oficial en {emp_nombre} vía portal corporativo."
+
+                    ofertas.append(
+                        crear_oferta(
+                            titulo, link, emp_nombre, loc, desc, fecha_hoy
+                        )
+                    )
+                print(f"   [+] {emp_nombre}: {len(jobs)} ofertas.")
+        except Exception as e:
+            print(f"   [!] Error en {emp_nombre}: {e}")
+    return ofertas
+
+
+# ===========================================================================
+# 4. WORKABLE WIDGET ENDPOINTS (PÚBLICOS POR EMBED)
+# ===========================================================================
+def extraer_workable_embed(empresas, fecha_hoy):
+    ofertas = []
+    print("-> Escaneando Workable Embed Feeds...")
+    for emp_nombre, slug in empresas:
+        url = f"https://apply.workable.com/api/v1/widget/accounts/{slug}"
+        try:
+            res = requests.get(url, headers=HEADERS, timeout=8)
+            if res.status_code == 200:
+                data = res.json()
+                jobs = data.get("jobs", [])
+                for job in jobs:
+                    titulo = job.get("title", "").strip()
+                    job_shortcode = job.get("shortcode", "")
+                    link = f"https://apply.workable.com/{slug}/j/{job_shortcode}/"
+                    city = job.get("city", "")
+                    country = job.get("country", "")
+                    loc = f"{city}, {country}".strip(", ")
+
+                    desc = f"Oferta publicada en el portal de empleo de {emp_nombre}."
+                    ofertas.append(
+                        crear_oferta(
+                            titulo, link, emp_nombre, loc, desc, fecha_hoy
+                        )
+                    )
+                print(f"   [+] {emp_nombre}: {len(jobs)} ofertas.")
+        except Exception as e:
+            print(f"   [!] Error en {emp_nombre}: {e}")
+    return ofertas
+
+
+# ===========================================================================
+# EJECUCIÓN PRINCIPAL
 # ===========================================================================
 def main():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    print("=== INICIANDO EXTRACCIÓN MASIVA DE PUESTOS DIRECTOS ===")
+    print("=== EXTRACCIÓN DIRECTA DESDE FEEDS RSS/XML PÚBLICOS ===")
 
     todas_ofertas = []
 
-    # 1. Ejecutar Workable
-    wk_jobs = extraer_workable_masivo(fecha_hoy)
-    print(f"   [+] Workable aportó: {len(wk_jobs)} ofertas.")
-    todas_ofertas.extend(wk_jobs)
+    # 1. Directorio Personio (Empresas con presencia en España/Andalucía)
+    EMPRESAS_PERSONIO = [
+        ("CoverManager", "covermanager"),
+        ("Ghenova", "ghenova"),
+        ("Emergya", "emergya"),
+        ("Tier1", "tier1"),
+        ("Scalpers", "scalpers"),
+        ("Inerco", "inerco"),
+        ("Galgus", "galgus"),
+        ("Clikalia", "clikalia"),
+        ("Tradeinn", "tradeinn"),
+    ]
 
-    # 2. Ejecutar SmartRecruiters
-    sr_jobs = extraer_smartrecruiters_masivo(fecha_hoy)
-    print(f"   [+] SmartRecruiters aportó: {len(sr_jobs)} ofertas.")
-    todas_ofertas.extend(sr_jobs)
+    # 2. Directorio Greenhouse
+    EMPRESAS_GREENHOUSE = [
+        ("Cabify", "cabify"),
+        ("Glovo", "glovo"),
+        ("Jobandtalent", "jobandtalent"),
+        ("Carto", "carto"),
+    ]
 
-    # 3. Ejecutar Personio Batch
-    p_jobs = extraer_personio_batch(fecha_hoy)
-    print(f"   [+] Personio Batch aportó: {len(p_jobs)} ofertas.")
-    todas_ofertas.extend(p_jobs)
+    # 3. Directorio Lever
+    EMPRESAS_LEVER = [
+        ("Z1 Digital", "z1"),
+        ("Typeform", "typeform"),
+        ("Flywire", "flywire"),
+        ("Factorial", "factorial"),
+    ]
 
-    print(f"\n>>> TOTAL ABSOLUTO OBTENIDO: {len(todas_ofertas)} TRABAJOS DE CALIDAD <<<")
+    # 4. Directorio Workable (Vía Embed)
+    EMPRESAS_WORKABLE = [
+        ("RevenueCat", "revenuecat"),
+        ("Holded", "holded"),
+    ]
 
-    if not todas_ofertas:
-        print("No se extrajeron ofertas en este pase.")
-        return
+    # Ejecutamos las extracciones
+    todas_ofertas.extend(extraer_personio(EMPRESAS_PERSONIO, fecha_hoy))
+    todas_ofertas.extend(extraer_greenhouse(EMPRESAS_GREENHOUSE, fecha_hoy))
+    todas_ofertas.extend(extraer_lever(EMPRESAS_LEVER, fecha_hoy))
+    todas_ofertas.extend(extraer_workable_embed(EMPRESAS_WORKABLE, fecha_hoy))
 
-    # Enviamos en lotes de 50 para no saturar el webhook
-    LOTE_TAMANO = 50
-    print(f"\nEnviando a Make en paquetes de {LOTE_TAMANO}...")
+    print(
+        f"\n>>> TOTAL ABSOLUTO EXTRAÍDO SIN REGISTROS: {len(todas_ofertas)} OFERTAS <<<"
+    )
 
-    for i in range(0, len(todas_ofertas), LOTE_TAMANO):
-        chunk = todas_ofertas[i : i + LOTE_TAMANO]
-        try:
-            r = requests.post(
-                MAKE_WEBHOOK_URL, json={"jobs": chunk}, timeout=20
-            )
-            print(f"   Lote {i // LOTE_TAMANO + 1} enviado. Respuesta Make: {r.status_code}")
-        except Exception as e:
-            print(f"   Error enviando lote a Make: {e}")
+    if todas_ofertas:
+        # Enviar en paquetes de 50 a Make
+        LOTE = 50
+        print("\nEnviando datos al Webhook de Make...")
+        for i in range(0, len(todas_ofertas), LOTE):
+            chunk = todas_ofertas[i : i + LOTE]
+            try:
+                r = requests.post(
+                    MAKE_WEBHOOK_URL, json={"jobs": chunk}, timeout=15
+                )
+                print(
+                    f"   [+] Lote enviado (ofertas {i+1} a {i+len(chunk)}). Respuesta Make: {r.status_code}"
+                )
+            except Exception as e:
+                print(f"   [!] Error enviando a Make: {e}")
 
 
 if __name__ == "__main__":
