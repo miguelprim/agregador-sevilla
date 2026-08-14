@@ -1,27 +1,12 @@
 from datetime import datetime
-import xml.etree.ElementTree as ET
 import re
 import requests
 
-# URL de tu Webhook de Make
 MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/tg93wwof55r5krw31joysyih2wv5qt0w"
 
-MUNICIPIOS_SEVILLA = [
-    "sevilla", "seville", "dos hermanas", "alcalá de guadaíra", "alcala de guadaira",
-    "utrera", "mairena del aljarafe", "écija", "ecija", "la rinconada", "los palacios",
-    "camas", "tomares", "bormujos", "aljarafe", "san juan de aznalfarache", "lebrija",
-    "coria del río", "coria del rio", "morón de la frontera", "carmona", "espartinas",
-    "castilleja de la cuesta", "gines", "mairena del alcor", "el viso del alcor",
-    "osuna", "sanlúcar la mayor", "marchena", "lora del río", "arahal"
-]
-
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
 }
 
 
@@ -29,13 +14,13 @@ def crear_oferta(titulo, link, portal, categoria, fecha_hoy):
     return {
         "job_title": titulo,
         "job_type": "fulltime",
-        "company_name": f"Empresa local ({portal})",
+        "company_name": f"Empresa España ({portal})",
         "company_url": link,
         "company_logo": "",
         "job_location": "onsite",
         "office_location": "Sevilla, España",
         "location_limits": "España",
-        "description": f"<p>Oferta publicada en Sevilla: <strong>{titulo}</strong>. Inscríbete en <a href='{link}'>{portal}</a>.</p>",
+        "description": f"<p>Oferta publicada en España/Sevilla: <strong>{titulo}</strong>. Inscríbete a través de <a href='{link}'>{portal}</a>.</p>",
         "apply_url": link,
         "apply_email": "",
         "salary_min": "",
@@ -51,79 +36,50 @@ def crear_oferta(titulo, link, portal, categoria, fecha_hoy):
     }
 
 
-def buscar_tecnoempleo_rss(fecha_hoy):
-    """Extrae ofertas usando el feed RSS oficial de Tecnoempleo."""
+def buscar_remotive_spain(fecha_hoy):
+    """Consulta la API pública de Remotive filtrada estrictamente por España."""
     ofertas = []
-    url = "https://www.tecnoempleo.com/feeds/rss-empleo-sevilla.xml"
-    print("Obteniendo RSS Tecnoempleo Sevilla...")
+    url = "https://remotive.com/api/remote-jobs?search=spain"
+    print("Consultando API Remotive (Filtro España)...")
     try:
         res = requests.get(url, headers=HEADERS, timeout=12)
         if res.status_code == 200:
-            root = ET.fromstring(res.content)
-            vistos = set()
-            for item in root.findall(".//item"):
-                title_elem = item.find("title")
-                link_elem = item.find("link")
-                if title_elem is not None and link_elem is not None:
-                    tit = title_elem.text.strip() if title_elem.text else ""
-                    link = link_elem.text.strip() if link_elem.text else ""
-                    if link not in vistos and len(tit) > 3:
-                        vistos.add(link)
-                        ofertas.append(crear_oferta(tit, link, "Tecnoempleo", "Tecnología / IT", fecha_hoy))
+            datos = res.json()
+            jobs = datos.get("jobs", [])
+            for job in jobs[:15]:
+                titulo = job.get("title", "").strip()
+                url_job = job.get("url", "")
+                cat = job.get("category", "Tecnología / IT")
+                if titulo and url_job:
+                    ofertas.append(crear_oferta(titulo, url_job, "Remotive España", cat, fecha_hoy))
     except Exception as e:
-        print(f"Error en RSS Tecnoempleo: {e}")
-    return ofertas
-
-
-def buscar_jooble_sevilla(fecha_hoy):
-    """Consulta ofertas de Sevilla a través de agregador abierto."""
-    ofertas = []
-    url = "https://es.jooble.org/api/feed/sevilla"
-    print("Obteniendo Feed Jooble Sevilla...")
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=12)
-        if res.status_code == 200:
-            html = res.text
-            matches = re.findall(r'<a[^>]+href=["\']([^"\']*)["\'][^>]*>(.*?)</a>', html, re.IGNORECASE)
-            vistos = set()
-            for link, titulo in matches:
-                tit = re.sub(r'<[^>]+>', '', titulo).strip()
-                if "job" in link.lower() and link not in vistos and len(tit) > 5:
-                    vistos.add(link)
-                    ofertas.append(crear_oferta(tit, link, "Jooble España", "General", fecha_hoy))
-    except Exception as e:
-        print(f"Error en Jooble Sevilla: {e}")
+        print(f"Error en Remotive: {e}")
     return ofertas
 
 
 def main():
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
-    print("Iniciando rastreador inmune a bloqueos (Sevilla)...")
+    print("Iniciando recopilación de datos directa por API...")
 
     ofertas = []
     
-    # 1. Tecnoempleo RSS
-    tecno_jobs = buscar_tecnoempleo_rss(fecha_hoy)
-    print(f"-> Tecnoempleo RSS: {len(tecno_jobs)} ofertas")
-    ofertas.extend(tecno_jobs)
+    # 1. Remotive API España
+    remotive_jobs = buscar_remotive_spain(fecha_hoy)
+    print(f"-> Ofertas recopiladas de Remotive España: {len(remotive_jobs)}")
+    ofertas.extend(remotive_jobs)
 
-    # 2. Jooble Sevilla
-    jooble_jobs = buscar_jooble_sevilla(fecha_hoy)
-    print(f"-> Jooble Sevilla: {len(jooble_jobs)} ofertas")
-    ofertas.extend(jooble_jobs)
-
-    print(f"\nTOTAL OFERTAS EXTRAÍDAS: {len(ofertas)}")
+    print(f"\nTOTAL FINAL: {len(ofertas)} ofertas")
 
     if not ofertas:
-        print("No se encontraron ofertas en esta ronda.")
+        print("Atención: No se han obtenido datos de la API.")
         return
 
-    print("Enviando ofertas a Make...")
+    print("Enviando resultados al Webhook de Make...")
     try:
         res = requests.post(MAKE_WEBHOOK_URL, json={"jobs": ofertas}, timeout=15)
         print(f"Respuesta Webhook Make: {res.status_code}")
     except Exception as e:
-        print(f"Error enviando a Make: {e}")
+        print(f"Error en la petición HTTP a Make: {e}")
 
 
 if __name__ == "__main__":
