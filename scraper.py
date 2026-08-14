@@ -2,8 +2,11 @@ from datetime import datetime
 import os
 import requests
 
-# ⚠️ IMPORTANTE: Pega aquí la URL de tu Webhook de Make
-MAKE_WEBHOOK_URL = "https://hook.eu1.make.com/AQUI_TU_WEBHOOK_DE_MAKE"
+# URL real de tu Webhook de Make
+MAKE_WEBHOOK_URL = os.getenv(
+    "MAKE_WEBHOOK_URL",
+    "https://hook.eu1.make.com/tg93wwof55r5krw31joysyih2wv5qt0w",
+)
 
 MUNICIPIOS_SEVILLA = [
     "sevilla",
@@ -36,6 +39,7 @@ def buscar_empleos():
   ofertas_encontradas = []
   fecha_hoy = datetime.now().strftime("%Y-%m-%d")
 
+  # 1. BÚSQUEDA REAL EN LA API
   try:
     url = "https://www.arbeitnow.com/api/job-board-api"
     respuesta = requests.get(url, timeout=10)
@@ -51,30 +55,58 @@ def buscar_empleos():
           job_location = "remote" if remote else "onsite"
 
           ofertas_encontradas.append({
-    "job_title": "Desarrollador Software Test Sevilla",
-    "job_type": "fulltime",
-    "company_name": "Iglubit Test Tech",
-    "company_url": "https://iglubit.com",
-    "company_logo": "",
-    "job_location": "onsite",
-    "office_location": "Sevilla, España",
-    "location_limits": "España",
-    "description": "<p>Esta es una oferta de prueba para verificar la integración con Google Sheets.</p>",
-    "apply_url": "https://iglubit.com",
-    "apply_email": "contacto@iglubit.com",
-    "salary_min": "35000",
-    "salary_maximum": "45000",
-    "salary_currency": "EUR",
-    "salary_schedule": "yearly",
-    "highlighted": "FALSE",
-    "sticky": "FALSE",
-    "post_length": "30",
-    "post_state": "published",
-    "date_posted": fecha_hoy,
-    "category_name": "Desarrollo",
-})
+              "job_title": puesto.get("title", ""),
+              "job_type": "fulltime",
+              "company_name": puesto.get("company_name", ""),
+              "company_url": puesto.get("url", ""),
+              "company_logo": "",
+              "job_location": job_location,
+              "office_location": ubicacion,
+              "location_limits": "España",
+              "description": puesto.get("description", ""),
+              "apply_url": puesto.get("url", ""),
+              "apply_email": "",
+              "salary_min": "",
+              "salary_maximum": "",
+              "salary_currency": "EUR",
+              "salary_schedule": "yearly",
+              "highlighted": "FALSE",
+              "sticky": "FALSE",
+              "post_length": "30",
+              "post_state": "published",
+              "date_posted": fecha_hoy,
+              "category_name": "General",
+          })
   except Exception as e:
     print(f"Error al buscar en API: {e}")
+
+  # 2. INYECCIÓN DE OFERTA DE PRUEBA (Para forzar la llegada de datos)
+  ofertas_encontradas.append({
+      "job_title": "Desarrollador Software Test Sevilla",
+      "job_type": "fulltime",
+      "company_name": "Iglubit Test Tech",
+      "company_url": "https://iglubit.com",
+      "company_logo": "",
+      "job_location": "onsite",
+      "office_location": "Sevilla, España",
+      "location_limits": "España",
+      "description": (
+          "<p>Esta es una oferta de prueba para verificar la integración con"
+          " Google Sheets.</p>"
+      ),
+      "apply_url": "https://iglubit.com",
+      "apply_email": "contacto@iglubit.com",
+      "salary_min": "35000",
+      "salary_maximum": "45000",
+      "salary_currency": "EUR",
+      "salary_schedule": "yearly",
+      "highlighted": "FALSE",
+      "sticky": "FALSE",
+      "post_length": "30",
+      "post_state": "published",
+      "date_posted": fecha_hoy,
+      "category_name": "Desarrollo",
+  })
 
   return ofertas_encontradas
 
@@ -87,7 +119,8 @@ def enviar_a_make(ofertas):
   payload = {"jobs": ofertas}
   respuesta = requests.post(MAKE_WEBHOOK_URL, json=payload, timeout=10)
   print(
-      f"Enviadas {len(ofertas)} ofertas a Make. Respuesta: {respuesta.status_code}"
+      f"Enviadas {len(ofertas)} ofertas a Make. Respuesta servidor:"
+      f" {respuesta.status_code}"
   )
 
 
