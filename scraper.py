@@ -47,7 +47,7 @@ def obtener_ofertas_serpapi(query):
         "location": "Seville, Andalusia, Spain",
         "hl": "es",
         "gl": "es",
-        "api_key": a9dfc8ee2c49e1ac9efc61efdaea296636830367fb362b80650411c188a0229e,
+        "api_key": "a9dfc8ee2c49e1ac9efc61efdaea296636830367fb362b80650411c188a0229e",
     }
 
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
