@@ -2,9 +2,9 @@ name: Scraper Google Jobs Iglubit
 
 on:
   schedule:
-    # Se ejecuta 2 veces al día: 8:00 y 17:00 (UTC)
-    # En España: 10:00 y 19:00 (verano) / 09:00 y 18:00 (invierno)
-    - cron: '0 8,17 * * *'
+    # Se ejecuta 1 vez al día a las 8:00 UTC
+    # En España: 10:00 (verano) / 09:00 (invierno)
+    - cron: '0 8 * * *'
   workflow_dispatch:
 
 jobs:
